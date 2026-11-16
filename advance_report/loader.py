@@ -158,6 +158,10 @@ def validate(ds: Dataset) -> None:
             errors.append(f"работа {w.id}: статус done, но нет completed_at")
         if w.status == "cancelled" and w.cancelled_at is None:
             errors.append(f"работа {w.id}: статус cancelled, но нет cancelled_at")
+        if w.status != "done" and w.completed_at is not None:
+            errors.append(f"работа {w.id}: статус {w.status}, но заполнен completed_at")
+        if w.status != "cancelled" and w.cancelled_at is not None:
+            errors.append(f"работа {w.id}: статус {w.status}, но заполнен cancelled_at")
 
     for p in ds.payments:
         if p.contract_id not in contract_ids:
@@ -175,8 +179,12 @@ def validate(ds: Dataset) -> None:
             errors.append(f"платёж {p.id}: статус refunded, но нет refunded_at")
         if p.status == "queued" and p.paid_at is not None:
             errors.append(f"платёж {p.id}: статус queued, но заполнен paid_at")
+        if p.status != "refunded" and p.refunded_at is not None:
+            errors.append(f"платёж {p.id}: статус {p.status}, но заполнен refunded_at")
         if p.created_at is None:
             errors.append(f"платёж {p.id}: нет created_at")
+        if p.created_at and p.paid_at and p.paid_at < p.created_at:
+            errors.append(f"платёж {p.id}: оплачен раньше, чем заведён в учёт")
         if p.refunded_at and p.paid_at and p.refunded_at < p.paid_at:
             errors.append(f"платёж {p.id}: возврат раньше оплаты")
 

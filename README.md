@@ -12,6 +12,8 @@
 python -m advance_report --date 2026-11-10
 # то же, плюс CSV для Excel:
 python -m advance_report --date 10.11.2026 --csv report.csv
+# общие платежи пропорционально остаткам работ (по умолчанию - fifo, см. DECISIONS.md п. 5):
+python -m advance_report --date 2026-11-10 --allocation proportional
 # другая папка с данными:
 python -m advance_report --date 2026-11-10 --data path/to/data
 ```
@@ -24,7 +26,7 @@ python -m advance_report --date 2026-11-10 --data path/to/data
 python -m unittest discover -s tests -v
 ```
 
-Готовый отчёт на 10.11.2026 лежит в [reports/](reports/).
+Готовые отчёты на 10.11.2026 (FIFO и пропорциональный, для сравнения) лежат в [reports/](reports/).
 
 ## Что в репозитории
 
@@ -49,5 +51,6 @@ python -m unittest discover -s tests -v
 ## Что можно сделать дальше
 
 - Частичные возвраты и возвраты по отменённым работам (в формате сейчас нет суммы возврата).
-- Ручная привязка общих платежей к работам, если бухгалтер захочет поменять порядок из п. 5 DECISIONS.md.
+- Хранить зачёты аванса как записи, чтобы раскладка прошлых дат не менялась (см. «Что осталось слабым» в DECISIONS.md).
+- Ручная привязка общих платежей к работам, если бухгалтеру не подойдут ни FIFO, ни пропорциональный режим.
 - Маленький HTTP-эндпоинт `GET /report?date=...` поверх `build_report`, если отчёт нужен не из консоли.

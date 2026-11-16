@@ -5,8 +5,11 @@
 2. Выплачено = платежи, деньги по которым ушли не позже даты отчёта и не вернулись к этой дате.
 3. Платёж, привязанный к работе, идёт в эту работу (не больше того, что по ней положено);
    излишек и все непривязанные платежи - в общий котёл договора.
-4. Котёл распределяется: сначала на принятые работы по дате приёмки, затем на запланированные
-   по номеру работы. Отменённые работы ничего не получают. Остаток котла - переплата по договору.
+4. Котёл распределяется одним из способов (ALLOCATIONS):
+   - fifo (по умолчанию): сначала на принятые работы по дате приёмки, затем на запланированные
+     по номеру работы;
+   - proportional: пропорционально тому, что осталось оплатить по каждой работе.
+   Отменённые работы ничего не получают. Остаток котла - переплата по договору.
 """
 
 from __future__ import annotations
@@ -20,6 +23,10 @@ from .money import format_rub
 # Состояния на дату отчёта
 PLANNED, DONE, CANCELLED = "planned", "done", "cancelled"
 PAID, QUEUED, REFUNDED = "paid", "queued", "refunded"
+
+# Способы распределения общих платежей по работам
+FIFO, PROPORTIONAL = "fifo", "proportional"
+ALLOCATIONS = (FIFO, PROPORTIONAL)
 
 STATUS_RU = {
     PLANNED: "запланирована",
@@ -125,6 +132,40 @@ class ContractReport:
 class Report:
     on: date
     contracts: list[ContractReport]
+    allocation: str = FIFO
+
+
+def _allocate_fifo(lines: list[WorkLine], pool: int) -> int:
+    for line in _allocation_order(lines):
+        if pool == 0:
+            break
+        take = min(pool, line.remaining)
+        line.paid_from_pool += take
+        pool -= take
+    return pool
+
+
+def _allocate_proportional(lines: list[WorkLine], pool: int) -> int:
+    """Делим котёл пропорционально остаткам по работам, в целых копейках.
+
+    Копейки, оставшиеся после округления вниз, раздаём по одной работам с наибольшей дробной
+    частью (метод наибольшего остатка) - так сумма долей ровно равна котлу.
+    """
+    open_lines = [l for l in lines if l.remaining > 0]
+    total = sum(l.remaining for l in open_lines)
+    if total == 0:
+        return pool
+    to_split = min(pool, total)
+    shares = []
+    for l in open_lines:
+        whole, frac = divmod(to_split * l.remaining, total)
+        shares.append([l, whole, frac])
+    leftover = to_split - sum(s[1] for s in shares)
+    for s in sorted(shares, key=lambda s: (-s[2], s[0].work.id))[:leftover]:
+        s[1] += 1
+    for line, amount, _ in shares:
+        line.paid_from_pool += amount
+    return pool - to_split
 
 
 def _allocation_order(lines: list[WorkLine]) -> list[WorkLine]:
@@ -134,7 +175,10 @@ def _allocation_order(lines: list[WorkLine]) -> list[WorkLine]:
     return done + planned
 
 
-def build_contract(contract: Contract, works: list[Work], payments: list[Payment], on: date) -> ContractReport:
+def build_contract(contract: Contract, works: list[Work], payments: list[Payment], on: date,
+                   allocation: str = FIFO) -> ContractReport:
+    if allocation not in ALLOCATIONS:
+        raise ValueError(f"неизвестный способ распределения: {allocation}")
     lines = []
     for w in sorted(works, key=lambda w: w.id):
         state = work_state(w, on)
@@ -167,16 +211,16 @@ def build_contract(contract: Contract, works: list[Work], payments: list[Payment
                        f"зачтено как общий платёж по договору")
             report.warnings.append(f"Платёж {p.id}: {pl.note}.")
 
-    # 2. Общий котёл - по принятым работам (по дате приёмки), затем по запланированным.
-    for line in _allocation_order(lines):
-        if pool == 0:
-            break
-        take = min(pool, line.remaining)
-        line.paid_from_pool += take
-        pool -= take
-    report.overpaid = pool
+    # 2. Общий котёл - по работам выбранным способом.
+    if allocation == FIFO:
+        report.overpaid = _allocate_fifo(lines, pool)
+    else:
+        report.overpaid = _allocate_proportional(lines, pool)
 
     # 3. Сверки, которые бухгалтеру стоит увидеть.
+    if contract.signed_at and contract.signed_at > on:
+        report.warnings.append(
+            f"Договор подписан {contract.signed_at:%d.%m.%Y}, после даты отчёта.")
     for line in lines:
         w = line.work
         if w.status == DONE and line.state != DONE:
@@ -203,13 +247,13 @@ def build_contract(contract: Contract, works: list[Work], payments: list[Payment
     return report
 
 
-def build_report(ds: Dataset, on: date) -> Report:
+def build_report(ds: Dataset, on: date, allocation: str = FIFO) -> Report:
     reports = []
     for c in sorted(ds.contracts, key=lambda c: c.id):
         works = [w for w in ds.works if w.contract_id == c.id]
         payments = [p for p in ds.payments if p.contract_id == c.id]
-        reports.append(build_contract(c, works, payments, on))
-    return Report(on=on, contracts=reports)
+        reports.append(build_contract(c, works, payments, on, allocation))
+    return Report(on=on, contracts=reports, allocation=allocation)
 
 
 def _rub(kop: int) -> str:

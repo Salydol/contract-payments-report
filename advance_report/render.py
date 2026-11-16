@@ -6,7 +6,12 @@ import csv
 import io
 from datetime import date
 
-from .calc import CANCELLED, PAID, QUEUED, REFUNDED, STATUS_RU, ContractReport, Report
+from .calc import CANCELLED, FIFO, PAID, QUEUED, REFUNDED, STATUS_RU, ContractReport, Report
+
+ALLOCATION_RU = {
+    FIFO: "общие платежи засчитаны сначала за принятые работы по дате приёмки, затем за запланированные",
+    "proportional": "общие платежи засчитаны пропорционально остатку по каждой работе",
+}
 from .money import format_plain, format_rub
 
 
@@ -89,7 +94,8 @@ def _contract_text(cr: ContractReport, on: date) -> str:
 
 
 def render_text(report: Report) -> str:
-    parts = [f"Отчёт по оплате работ на {_d(report.on)} (включительно). Суммы в рублях.", ""]
+    parts = [f"Отчёт по оплате работ на {_d(report.on)} (включительно). Суммы в рублях.",
+             f"Распределение: {ALLOCATION_RU[report.allocation]}.", ""]
     for cr in report.contracts:
         parts.append("=" * 100)
         parts.append(_contract_text(cr, report.on))
@@ -122,7 +128,7 @@ def render_csv(report: Report) -> str:
         return format_plain(kop).replace(".", ",")
 
     buf = io.StringIO()
-    writer = csv.writer(buf, delimiter=";", lineterminator="\r\n")
+    writer = _SafeWriter(csv.writer(buf, delimiter=";", lineterminator="\r\n"))
     writer.writerow(CSV_COLUMNS)
     on = _d(report.on)
     for cr in report.contracts:
@@ -140,3 +146,23 @@ def render_csv(report: Report) -> str:
             m(cr.queued_total), m(cr.refunded_total), m(cr.overpaid),
         ])
     return buf.getvalue()
+
+
+class _SafeWriter:
+    """Защита от CSV-инъекций: текст, который Excel принял бы за формулу, экранируем апострофом."""
+
+    def __init__(self, writer):
+        self._writer = writer
+
+    def writerow(self, row: list[str]) -> None:
+        self._writer.writerow([_safe_cell(c) for c in row])
+
+
+def _safe_cell(value: str) -> str:
+    if value and value[0] in "=+-@\t\r" and not _is_number(value):
+        return "'" + value
+    return value
+
+
+def _is_number(value: str) -> bool:
+    return value.lstrip("-").replace(",", "", 1).isdigit()

@@ -6,7 +6,7 @@ from datetime import date
 from pathlib import Path
 
 from advance_report.__main__ import main
-from advance_report.calc import CANCELLED, DONE, PLANNED, build_contract, build_report
+from advance_report.calc import CANCELLED, DONE, PLANNED, PROPORTIONAL, build_contract, build_report
 from advance_report.loader import Contract, DataError, Payment, Work, load
 from advance_report.money import format_rub, parse_kopecks
 
@@ -82,6 +82,35 @@ class AllocationTest(unittest.TestCase):
         r = build_contract(C, [W("A", 100, "done", date(2026, 2, 1))], [P("p1", 80), P("p2", 30)], ON)
         self.assertEqual(r.overpaid, 10 * RUB)
         self.assertEqual(r.works[0].remaining, 0)
+
+
+class ProportionalTest(unittest.TestCase):
+    def test_split_by_remaining_and_exact_to_kopeck(self):
+        works = [W("A", 20000, "done", date(2026, 2, 1)), W("B", 30000), W("C1", 40000)]
+        r = build_contract(C, works, [P("p", 75000)], ON, PROPORTIONAL)
+        got = {l.work.id: l.paid for l in r.works}
+        # 75000 * 20/90 = 16666.666.. -> 16666.67 (лишняя копейка - работе с наибольшей дробной частью)
+        self.assertEqual(got, {"A": 1666667, "B": 2500000, "C1": 3333333})
+        self.assertEqual(sum(got.values()), 75000 * RUB)
+
+    def test_linked_payment_reduces_share(self):
+        works = [W("A", 100), W("B", 100)]
+        r = build_contract(C, works, [P("p1", 20, work="A"), P("p2", 90)], ON, PROPORTIONAL)
+        got = {l.work.id: (l.paid_direct, l.paid_from_pool) for l in r.works}
+        self.assertEqual(got, {"A": (2000, 4000), "B": (0, 5000)})  # остатки 80 и 100 -> 40 и 50
+
+    def test_overpayment_and_cancelled(self):
+        works = [W("A", 100, "cancelled", cancelled=date(2026, 2, 1)), W("B", 100)]
+        r = build_contract(C, works, [P("p", 130)], ON, PROPORTIONAL)
+        self.assertEqual((r.works[0].paid, r.works[1].paid, r.overpaid), (0, 100 * RUB, 30 * RUB))
+
+    def test_totals_do_not_depend_on_method(self):
+        for d in (date(2026, 9, 5), date(2026, 11, 10), date(2026, 11, 12)):
+            a = build_report(load(DATA), d)
+            b = build_report(load(DATA), d, PROPORTIONAL)
+            for ca, cb in zip(a.contracts, b.contracts):
+                self.assertEqual((ca.paid_total, ca.remaining_total, ca.overpaid),
+                                 (cb.paid_total, cb.remaining_total, cb.overpaid))
 
 
 class AsOfDateTest(unittest.TestCase):
@@ -169,12 +198,32 @@ class LoaderTest(unittest.TestCase):
             "P-1,D-1,,x,10.00,paid,2026-01-01,,",                 # paid без даты оплаты
             "P-1,D-1,,x,10.00,weird,2026-01-01,,",                # неизвестный статус
             "P-1,D-1,,x,10.555,paid,2026-01-01,2026-01-01,",      # дробные копейки
+            "P-1,D-1,,x,10.00,paid,2026-01-01,2026-01-02,2026-01-05",  # paid, но есть дата возврата
+            "P-1,D-1,,x,10.00,paid,2026-03-01,2026-01-01,",       # оплачен раньше, чем заведён
         ]
         for row in bad_rows:
             with self.subTest(row=row), tempfile.TemporaryDirectory() as tmp:
                 self._write(Path(tmp), row)
                 with self.assertRaises(DataError):
                     load(Path(tmp))
+
+    def test_work_status_conflicts_rejected(self):
+        for works_row in ("W-1,D-1,t,100.00,planned,2026-02-01,", "W-1,D-1,t,100.00,done,2026-02-01,2026-03-01"):
+            with self.subTest(row=works_row), tempfile.TemporaryDirectory() as tmp:
+                self._write(Path(tmp), "P-1,D-1,,x,10.00,queued,2026-01-01,,")
+                (Path(tmp) / "works.csv").write_text(
+                    "work_id,contract_id,title,price,status,completed_at,cancelled_at\n" + works_row + "\n",
+                    encoding="utf-8")
+                with self.assertRaises(DataError):
+                    load(Path(tmp))
+
+    def test_csv_formula_is_escaped(self):
+        from advance_report.render import render_csv
+        works = [Work("W", "C", '=HYPERLINK("http://x")', 100 * RUB, "planned", None, None)]
+        from advance_report.calc import Report
+        text = render_csv(Report(ON, [build_contract(C, works, [], ON)]))
+        self.assertIn("'=HYPERLINK", text)
+        self.assertNotIn(";=HYPERLINK", text)
 
     def test_cli_runs_and_writes_csv(self):
         with tempfile.TemporaryDirectory() as tmp:

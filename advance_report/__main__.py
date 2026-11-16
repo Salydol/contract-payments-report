@@ -7,7 +7,7 @@ import sys
 from datetime import date, datetime
 from pathlib import Path
 
-from .calc import build_report
+from .calc import ALLOCATIONS, FIFO, build_report
 from .loader import DataError, load
 from .render import render_csv, render_text
 
@@ -29,6 +29,9 @@ def main(argv: list[str] | None = None) -> int:
                         help="дата отчёта включительно, например 2026-11-10 или 10.11.2026")
     parser.add_argument("--data", type=Path, default=Path("data"),
                         help="папка с contracts.csv, works.csv, payments.csv (по умолчанию ./data)")
+    parser.add_argument("--allocation", choices=ALLOCATIONS, default=FIFO,
+                        help="как распределять платежи без привязки к работе: fifo - сначала принятые "
+                             "работы по дате приёмки (по умолчанию), proportional - пропорционально остаткам")
     parser.add_argument("--csv", type=Path, metavar="FILE",
                         help="дополнительно сохранить отчёт в CSV для Excel")
     args = parser.parse_args(argv)
@@ -37,7 +40,7 @@ def main(argv: list[str] | None = None) -> int:
         sys.stdout.reconfigure(encoding="utf-8")
 
     try:
-        report = build_report(load(args.data), args.date)
+        report = build_report(load(args.data), args.date, args.allocation)
     except DataError as exc:
         print(f"Отчёт не построен: {exc}", file=sys.stderr)
         return 2
