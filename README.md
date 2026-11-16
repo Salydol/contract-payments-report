@@ -39,6 +39,11 @@ python -m unittest discover -s tests -v
 | `tests/` | тесты, включая контрольные цифры по `data/` на 10.11.2026 |
 | [DECISIONS.md](DECISIONS.md) | принятые решения и допущения |
 | [ЗАПИСКА_БУХГАЛТЕРУ.md](ЗАПИСКА_БУХГАЛТЕРУ.md) | как читать отчёт и что подтвердить |
+| [transcript/claude-chat.pdf](transcript/claude-chat.pdf) | полный транскрипт работы с Claude |
+
+## Транскрипт
+
+Работа велась в Claude (чат с агентом и доступом к файлам), а не в Claude Code, поэтому вместо экспорта `/export` приложен полный диалог без правок: `transcript/claude-chat.pdf`.
 
 ## Коротко о расчёте
 
